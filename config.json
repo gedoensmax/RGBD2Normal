@@ -7,5 +7,9 @@
   "scannet":
   {
     "data_path":""
+  },
+  "sevenscenes":
+  {
+    "data_path":"/mnt/data_ssd/images/7_scenes/heads"
   }
 }

@@ -4,7 +4,7 @@
 
 import torch.nn as nn
 import torch
-from models_utils import create_conv_2_in, create_addon
+from .models_utils import create_conv_2_in, create_addon
 
 class fconv_in(nn.Module):
     

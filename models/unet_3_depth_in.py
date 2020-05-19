@@ -4,7 +4,7 @@
 
 import torch.nn as nn
 import torch
-from models_utils import *
+from .models_utils import *
 
 class unet_3_in(nn.Module):
     

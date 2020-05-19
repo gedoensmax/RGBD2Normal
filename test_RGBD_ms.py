@@ -8,9 +8,11 @@
 import sys, os
 import torch
 import argparse
+import imageio
 import timeit
 import numpy as np
 import scipy.misc as misc
+import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
@@ -27,6 +29,7 @@ from pre_trained import get_premodel
 from utils import norm_imsave, change_channel
 from models.eval import eval_normal_pixel, eval_print
 from loader.loader_utils import png_reader_32bit, png_reader_uint8
+import h5py
 
 
 def test(args):
@@ -43,11 +46,17 @@ def test(args):
 
     if args.model_full_name != '':
         # Use the full name of model to load
+        if 'scannet' in args.model_full_name:
+            net = '_sc'
+        elif 'matterport' in args.model_full_name:
+            net = '_mp'
+        else:
+            print 'No model name defined!'
+
         print("Load training model: " + args.model_full_name)
         checkpoint = torch.load(pjoin(args.model_savepath, args.model_full_name))
         model_F.load_state_dict(checkpoint['model_F_state'])
         model_map.load_state_dict(checkpoint["model_map_state"])
-
 
     # Setup image
     if args.imgset:
@@ -57,7 +66,7 @@ def test(args):
         v_loader = data_loader(data_path, split=args.test_split, img_size=(args.img_rows, args.img_cols),
                                img_norm=args.img_norm)
         evalloader = data.DataLoader(v_loader, batch_size=1)
-        print("Finish Loader Setup")
+        print("Finish Loader Setup with length {}".format(len(v_loader)))
 
         model_F.cuda()
         model_F.eval()
@@ -68,58 +77,70 @@ def test(args):
         sum_mean, sum_median, sum_small, sum_mid, sum_large, sum_num = [], [], [], [], [], []
         evalcount = 0
         with torch.no_grad():
-            for i_val, (images_val, labels_val, masks_val, valids_val, depthes_val, meshdepthes_val) in tqdm(
-                    enumerate(evalloader)):
+            with torch.cuda.profiler.profile() as prof:
+                for i_val, (images_val, labels_val, masks_val, valids_val, depthes_val, meshdepthes_val) in tqdm(
+                        enumerate(evalloader)):
 
-                images_val = Variable(images_val.contiguous().cuda())
-                labels_val = Variable(labels_val.contiguous().cuda())
-                masks_val = Variable(masks_val.contiguous().cuda())
-                valids_val = Variable(valids_val.contiguous().cuda())
-                depthes_val = Variable(depthes_val.contiguous().cuda())
+                    images_val = Variable(images_val.contiguous().cuda())
+                    labels_val = Variable(labels_val.contiguous().cuda())
+                    masks_val = Variable(masks_val.contiguous().cuda())
+                    valids_val = Variable(valids_val.contiguous().cuda())
+                    depthes_val = Variable(depthes_val.contiguous().cuda())
+                    if args.arch_map == 'map_conv':
+                        outputs_valid = model_map(torch.cat((depthes_val, valids_val[:, np.newaxis, :, :]), dim=1))
+                        outputs, outputs1, outputs2, outputs3, output_d = model_F(images_val, depthes_val,
+                                                                                  outputs_valid.squeeze(1))
+                    else:
+                            outputs, outputs1, outputs2, outputs3, output_d = model_F(images_val, depthes_val, valids_val)
+                    print(prof)
 
-                if args.arch_map == 'map_conv':
-                    outputs_valid = model_map(torch.cat((depthes_val, valids_val[:, np.newaxis, :, :]), dim=1))
-                    outputs, outputs1, outputs2, outputs3, output_d = model_F(images_val, depthes_val,
-                                                                              outputs_valid.squeeze(1))
-                else:
-                    outputs, outputs1, outputs2, outputs3, output_d = model_F(images_val, depthes_val, valids_val)
+                    if i_val > 50: break
+                    continue
 
-                outputs_n, pixelnum, mean_i, median_i, small_i, mid_i, large_i = eval_normal_pixel(outputs, labels_val,
-                                                                                                   masks_val)
-                outputs_norm = np.squeeze(outputs_n.data.cpu().numpy(), axis=0)
-                labels_val_norm = np.squeeze(labels_val.data.cpu().numpy(), axis=0)
-                images_val = np.squeeze(images_val.data.cpu().numpy(), axis=0)
-                images_val = images_val + 0.5
-                images_val = images_val.transpose(1, 2, 0)
-                depthes_val = np.squeeze(depthes_val.data.cpu().numpy(), axis=0)
-                depthes_val = np.transpose(depthes_val, [1, 2, 0])
-                depthes_val = np.repeat(depthes_val, 3, axis=2)
+                    outputs_n, pixelnum, mean_i, median_i, small_i, mid_i, large_i = eval_normal_pixel(outputs, labels_val,
+                                                                                                       masks_val)
+                    outputs_norm = np.squeeze(outputs_n.data.cpu().numpy(), axis=0)
+                    labels_val_norm = np.squeeze(labels_val.data.cpu().numpy(), axis=0)
+                    images_val = np.squeeze(images_val.data.cpu().numpy(), axis=0)
+                    images_val = images_val + 0.5
+                    images_val = images_val.transpose(1, 2, 0)
+                    depthes_val = np.squeeze(depthes_val.data.cpu().numpy(), axis=0)
+                    depthes_val = np.transpose(depthes_val, [1, 2, 0])
+                    depthes_val = np.repeat(depthes_val, 3, axis=2)
 
-                outputs_norm = change_channel(outputs_norm)
-                labels_val_norm = (labels_val_norm + 1) / 2
-                labels_val_norm = change_channel(labels_val_norm)
+                    labels_val_norm = (labels_val_norm + 1) / 2
+                    labels_val_norm = change_channel(labels_val_norm)
 
-                # if (i_val+1)%10 == 0:
-                misc.imsave(pjoin(args.testset_out_path, "{}_MS_hyb.png".format(i_val + 1)), outputs_norm)
-                misc.imsave(pjoin(args.testset_out_path, "{}_gt.png".format(i_val + 1)), labels_val_norm)
-                misc.imsave(pjoin(args.testset_out_path, "{}_in.jpg".format(i_val + 1)), images_val)
-                misc.imsave(pjoin(args.testset_out_path, "{}_depth.png".format(i_val + 1)), depthes_val)
+                    # save as h5
+                    with h5py.File(v_loader.files[args.test_split][i_val] + ".normal_predict{}.h5".format(net), 'w',
+                                   driver='sec2') as f:
+                        dset = f.create_dataset('result', data=outputs_norm.transpose(2, 0, 1), dtype='float')
+                        f.flush()
+                        f.close()
+                    # if (i_val+1)%10 == 0:
+                    misc.imsave(v_loader.files[args.test_split][i_val] + ".normal_predict{}.png".format(net), outputs_norm)
 
-                # accumulate the metrics in matrix
-                if ((np.isnan(mean_i)) | (np.isinf(mean_i)) == False):
-                    sum_mean.append(mean_i)
-                    sum_median.append(median_i)
-                    sum_small.append(small_i)
-                    sum_mid.append(mid_i)
-                    sum_large.append(large_i)
-                    sum_num.append(pixelnum)
-                    evalcount += 1
-                    if (i_val + 1) % 10 == 0:
-                        print("Iteration %d Evaluation Loss: mean %.4f, median %.4f, 11.25 %.4f, 22.5 %.4f, 30 %.4f" % (
-                            i_val + 1,
-                            mean_i, median_i, small_i, mid_i, large_i))
+                    # misc.imsave(pjoin(args.testset_out_path, "{}_MS_hyb.png".format(i_val + 1)), outputs_norm)
+                    # misc.imsave(pjoin(args.testset_out_path, "{}_gt.png".format(i_val + 1)), labels_val_norm)
+                    # misc.imsave(pjoin(args.testset_out_path, "{}_in.jpg".format(i_val + 1)), images_val)
+                    # misc.imsave(pjoin(args.testset_out_path, "{}_depth.png".format(i_val + 1)), depthes_val)
 
-                        # Summarize the result
+                    # accumulate the metrics in matrix
+                    if ((np.isnan(mean_i)) | (np.isinf(mean_i)) == False):
+                        sum_mean.append(mean_i)
+                        sum_median.append(median_i)
+                        sum_small.append(small_i)
+                        sum_mid.append(mid_i)
+                        sum_large.append(large_i)
+                        sum_num.append(pixelnum)
+                        evalcount += 1
+                        if (i_val + 1) % 10 == 0:
+                            print("Iteration %d Evaluation Loss: mean %.4f, median %.4f, 11.25 %.4f, 22.5 %.4f, 30 %.4f" % (
+                                i_val + 1,
+                                mean_i, median_i, small_i, mid_i, large_i))
+
+                            # Summarize the result
+
             eval_print(sum_mean, sum_median, sum_small, sum_mid, sum_large, sum_num, item='Pixel-Level')
 
             avg_mean = sum(sum_mean) / evalcount
@@ -149,13 +170,20 @@ def test(args):
             os.mkdir(args.out_path)
         print("Read Input Image from : {}".format(args.img_path))
         for i in os.listdir(args.img_path):
-            if not i.endswith('.jpg'):
+            if i.endswith('.jpg'):
+                print i
+                input_f = args.img_path + i
+                depth_f = args.depth_path + i[:-4] + '.png'
+                output_f = args.out_path + i[:-4] + '_rgbd{}.png'.format(net)
+                convert = lambda depth: depth > 0.0001
+            elif i.endswith('.png'):
+                print i
+                input_f = args.img_path + i
+                depth_f = args.depth_path + i[:-10] + '.depth.png'
+                output_f = args.out_path + i[:-10] + '.normal_predict{}.png'.format(net)
+                convert = lambda depth: depth < 65530
+            else:
                 continue
-
-            print i
-            input_f = args.img_path + i
-            depth_f = args.depth_path + i[:-4] + '.png'
-            output_f = args.out_path + i[:-4] + '_rgbd.png'
             img = misc.imread(input_f)
 
             orig_size = img.shape[:-1]
@@ -196,7 +224,8 @@ def test(args):
 
             # valid = 1-depth
             # valid[valid>1] = 1
-            valid = (depth > 0.0001).astype(float)
+            valid = convert(depth).astype(float)
+            depth = depth * valid
             # valid = depth.astype(float)
             depth = depth[np.newaxis, :, :]
             depth = np.expand_dims(depth, 0)
@@ -229,8 +258,16 @@ def test(args):
             outputs_norm = norm_imsave(outputs)
             outputs_norm = np.squeeze(outputs_norm.data.cpu().numpy(), axis=0)
             # outputs_norm = misc.imresize(outputs_norm, orig_size)
-            outputs_norm = change_channel(outputs_norm)
-            misc.imsave(output_f, outputs_norm)
+            outputs_norm = np.array(change_channel(outputs_norm))
+
+            # save as h5
+            with h5py.File(output_f[:-4] + ".h5", 'w', driver='sec2') as f:
+                dset = f.create_dataset('result', data=outputs_norm, dtype='float')
+                f.flush()
+                f.close()
+
+            misc.imsave(output_f, outputs_norm.transpose(1, 2, 0))
+
         print("Complete")
         # end of test on no dataset images
 
@@ -293,6 +330,7 @@ if __name__ == '__main__':
                         help='Enable input image transpose | False by default')
     parser.add_argument('--no-img_rotate', dest='img_rot', action='store_false',
                         help='Disable input image transpose | False by default')
+    parser.add_argument('--hist_path', type=str)
 
     parser.set_defaults(img_rot=False)
 

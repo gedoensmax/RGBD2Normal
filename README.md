@@ -47,12 +47,12 @@ Please refer to Model section for model download.
 * tensorboardX
 
 # Dataset 
-Two datasets are used: Matterport and Scannet. Please refer to [[this website](http://deepcompletion.cs.princeton.edu/)] for data download.<br>
+Two datasets are used: Matterport and Scannet. Please refer to [this website](http://deepcompletion.cs.princeton.edu/) for data download.<br>
 After data download, please config the data path in config.json.
 
 # Model 
 
-Download the model and pretrain file from [[Google Drive](https://drive.google.com/drive/folders/1dSdTR_ezhXgEjG7n5hrmku5Mey5ZZJCr)] 
+Download the model and pretrain file from [Google Drive](https://drive.google.com/drive/folders/1dSdTR_ezhXgEjG7n5hrmku5Mey5ZZJCr) 
 
 # Demo 
 1. Please set up environment and download the model.

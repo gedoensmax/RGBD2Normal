@@ -11,6 +11,7 @@ def change_channel(outputs_norm, scale=1):
     nz = outputs_norm[:, :, 2]
     new_norm = [nx, nz, ny]
     return new_norm
+
 def get_dataList(filename):
     f = open(filename, 'r')
     data_list = list()

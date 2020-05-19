@@ -1,6 +1,7 @@
 import json
 from loader.MT_loader import mtLoader
 from loader.SC_loader import scLoader
+from loader.SevenScenes_loader import sevenScenesLoader
 
 def get_loader(name):
     """get_loader
@@ -10,6 +11,7 @@ def get_loader(name):
     return {
         'matterport':mtLoader,
         'scannet':scLoader,
+        'sevenscenes': sevenScenesLoader,
     }[name]
 
 
